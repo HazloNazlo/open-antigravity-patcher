@@ -33,7 +33,7 @@ from patcher.utils.console import (
 )
 
 from patcher.utils.file import file_size, format_bytes
-from patcher.utils.update import check_for_updates, open_releases_page, print_update_status_notice
+from patcher.utils.update import check_for_updates, check_for_updates_async, open_releases_page, print_update_status_notice
 
 from patcher.ide.discovery import (
     find_install_root,
@@ -231,112 +231,102 @@ def print_target_info(main_js_path, manager_path="", agy_path="", vscode_path=""
     if show_search_line:
         info("Searching for installations...")
 
+    print_menu_section("TARGET STATUS")
+
     # 1. Antigravity IDE Info
-    print_menu_section("ANTIGRAVITY IDE")
-    _kv("Target:", main_js_path if main_js_path else "Not found", COLOR_CYAN)
     if main_js_path and os.path.exists(main_js_path):
         try:
             with open(main_js_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            _kv("Status:", "found", COLOR_GREEN)
             patched = is_already_patched(content)
-            _kv("Patch:", "already patched" if patched else "not patched",
-                COLOR_YELLOW if patched else COLOR_GREEN)
+            ver_str, _ = get_ag_version(main_js_path)
+            size = file_size(main_js_path)
+            status_text = "already patched" if patched else "not patched"
+            status_color = COLOR_GREEN if patched else COLOR_YELLOW
+            icon = color("[+]", COLOR_GREEN) if patched else color("[!]", COLOR_YELLOW)
+            ver_info = f" (v{ver_str})" if ver_str else ""
+            size_info = f" • {format_bytes(size)}" if size > 0 else ""
+            print(f"  {icon} {color('Antigravity IDE:', COLOR_WHITE):<24} {color(status_text, status_color)}{color(ver_info + size_info, COLOR_DIM)}")
+            print(f"      {color(main_js_path, COLOR_DIM)}")
         except Exception:
-            _kv("Status:", "unreadable", COLOR_RED)
-            _kv("Patch:", "unreadable", COLOR_RED)
-
-        ver_str, _ = get_ag_version(main_js_path)
-        _kv("Version:", ver_str if ver_str else "not detected",
-            COLOR_GREEN if ver_str else COLOR_YELLOW)
-
-        size = file_size(main_js_path)
-        _kv("Size:", format_bytes(size), COLOR_GREEN if size > 0 else COLOR_YELLOW)
+            print(f"  {color('[-]', COLOR_RED)} {color('Antigravity IDE:', COLOR_WHITE):<24} {color('unreadable', COLOR_RED)}")
     else:
-        _kv("Status:", "not found", COLOR_RED)
+        print(f"  {color('[-]', COLOR_DIM)} {color('Antigravity IDE:', COLOR_WHITE):<24} {color('not found', COLOR_DIM)}")
 
-    print()
-
-    # 2. Antigravity 2.0 Info
-    print_menu_section("ANTIGRAVITY 2.0")
-    _kv("Target:", manager_path if manager_path else "Not found", COLOR_CYAN)
+    # 2. Antigravity 2.0 (language_server) Info
     if manager_path and os.path.isfile(manager_path):
-        _kv("Status:", "found", COLOR_GREEN)
         patched = is_mgr_patched(manager_path)
-        _kv("Patch:", "already patched" if patched else "not patched",
-            COLOR_YELLOW if patched else COLOR_GREEN)
-        
         ver_str = get_antigravity_version(manager_path)
-        _kv("Version:", ver_str if ver_str else "not detected",
-            COLOR_GREEN if ver_str else COLOR_YELLOW)
-
         size = file_size(manager_path)
-        _kv("Size:", format_bytes(size), COLOR_GREEN if size > 0 else COLOR_YELLOW)
+        status_text = "already patched" if patched else "not patched"
+        status_color = COLOR_GREEN if patched else COLOR_YELLOW
+        icon = color("[+]", COLOR_GREEN) if patched else color("[!]", COLOR_YELLOW)
+        ver_info = f" (v{ver_str})" if ver_str else ""
+        size_info = f" • {format_bytes(size)}" if size > 0 else ""
+        print(f"  {icon} {color('Antigravity 2.0:', COLOR_WHITE):<24} {color(status_text, status_color)}{color(ver_info + size_info, COLOR_DIM)}")
+        print(f"      {color(manager_path, COLOR_DIM)}")
     else:
-        _kv("Status:", "not found", COLOR_YELLOW)
+        print(f"  {color('[-]', COLOR_DIM)} {color('Antigravity 2.0:', COLOR_WHITE):<24} {color('not found', COLOR_DIM)}")
 
-    print()
-
-    # 3. Antigravity CLI Info
-    print_menu_section("ANTIGRAVITY CLI")
-    _kv("Target:", agy_path if agy_path else "Not found", COLOR_CYAN)
+    # 3. Antigravity CLI (agy) Info
     if agy_path and os.path.isfile(agy_path):
-        _kv("Status:", "found", COLOR_GREEN)
         patched = is_agy_patched(agy_path)
-        _kv("Patch:", "already patched" if patched else "not patched",
-            COLOR_YELLOW if patched else COLOR_GREEN)
         size = file_size(agy_path)
-        _kv("Size:", format_bytes(size), COLOR_GREEN if size > 0 else COLOR_YELLOW)
+        status_text = "already patched" if patched else "not patched"
+        status_color = COLOR_GREEN if patched else COLOR_YELLOW
+        icon = color("[+]", COLOR_GREEN) if patched else color("[!]", COLOR_YELLOW)
+        size_info = f" ({format_bytes(size)})" if size > 0 else ""
+        print(f"  {icon} {color('Antigravity CLI:', COLOR_WHITE):<24} {color(status_text, status_color)}{color(size_info, COLOR_DIM)}")
+        print(f"      {color(agy_path, COLOR_DIM)}")
     else:
-        _kv("Status:", "not found", COLOR_YELLOW)
-
-    print()
+        print(f"  {color('[-]', COLOR_DIM)} {color('Antigravity CLI:', COLOR_WHITE):<24} {color('not found', COLOR_DIM)}")
 
     # 4. Antigravity IDE backend (agy --hub) Info
-    print_menu_section("ANTIGRAVITY IDE BACKEND")
-    _kv("Target:", backend_agy_path if backend_agy_path else "Not found", COLOR_CYAN)
+    backend_status = None
     if backend_agy_path and os.path.isfile(backend_agy_path):
-        _kv("Status:", "found", COLOR_GREEN)
         patched = is_agy_patched(backend_agy_path)
-        _kv("Patch:", "already patched" if patched else "not patched",
-            COLOR_YELLOW if patched else COLOR_GREEN)
+        backend_status = patched
         size = file_size(backend_agy_path)
-        _kv("Size:", format_bytes(size), COLOR_GREEN if size > 0 else COLOR_YELLOW)
+        status_text = "already patched" if patched else "not patched"
+        status_color = COLOR_GREEN if patched else COLOR_YELLOW
+        icon = color("[+]", COLOR_GREEN) if patched else color("[!]", COLOR_YELLOW)
+        size_info = f" ({format_bytes(size)})" if size > 0 else ""
+        print(f"  {icon} {color('IDE Backend (agy):', COLOR_WHITE):<24} {color(status_text, status_color)}{color(size_info, COLOR_DIM)}")
+        print(f"      {color(backend_agy_path, COLOR_DIM)}")
     else:
-        _kv("Status:", "not found", COLOR_YELLOW)
+        print(f"  {color('[-]', COLOR_DIM)} {color('IDE Backend (agy):', COLOR_WHITE):<24} {color('not found', COLOR_DIM)}")
 
-    print()
+    # 5. Antigravity VS Code Extension Info (extension.js + agy bin)
+    has_ext = bool(vscode_path and os.path.isfile(vscode_path))
+    has_bin = bool(vscode_agy_path and os.path.isfile(vscode_agy_path))
+    if has_ext or has_bin:
+        ext_patched = False
+        if has_ext:
+            try:
+                with open(vscode_path, "r", encoding="utf-8") as f:
+                    ext_patched = is_vscode_patched(f.read())
+            except Exception:
+                pass
 
-    # 5. Antigravity VS Code Extension Info (extension.js + бинарь agy)
-    print_menu_section("ANTIGRAVITY VS CODE EXTENSION")
-    _kv("Target:", vscode_path if vscode_path else "Not found", COLOR_CYAN)
-    if vscode_path and os.path.isfile(vscode_path):
-        _kv("Status:", "found", COLOR_GREEN)
-        try:
-            with open(vscode_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            patched = is_vscode_patched(content)
-            _kv("Patch:", "already patched" if patched else "not patched",
-                COLOR_YELLOW if patched else COLOR_GREEN)
-        except Exception:
-            _kv("Patch:", "unreadable", COLOR_RED)
-        size = file_size(vscode_path)
-        _kv("Size:", format_bytes(size), COLOR_GREEN if size > 0 else COLOR_YELLOW)
+        if has_bin:
+            if backend_status is not None and os.path.abspath(vscode_agy_path) == os.path.abspath(backend_agy_path):
+                bin_patched = backend_status
+            else:
+                bin_patched = is_agy_patched(vscode_agy_path)
+        else:
+            bin_patched = False
+
+        all_patched = (ext_patched if has_ext else True) and (bin_patched if has_bin else True)
+        status_text = "already patched" if all_patched else "not patched"
+        status_color = COLOR_GREEN if all_patched else COLOR_YELLOW
+        icon = color("[+]", COLOR_GREEN) if all_patched else color("[!]", COLOR_YELLOW)
+        print(f"  {icon} {color('VS Code Extension:', COLOR_WHITE):<24} {color(status_text, status_color)}")
+        if has_ext:
+            print(f"      ext: {color(vscode_path, COLOR_DIM)}")
+        if has_bin and (not backend_agy_path or os.path.abspath(vscode_agy_path) != os.path.abspath(backend_agy_path)):
+            print(f"      bin: {color(vscode_agy_path, COLOR_DIM)}")
     else:
-        _kv("Status:", "not found", COLOR_YELLOW)
-
-    print()
-
-    _kv("AGY Bin:", vscode_agy_path if vscode_agy_path else "Not found", COLOR_CYAN)
-    if vscode_agy_path and os.path.isfile(vscode_agy_path):
-        _kv("Status:", "found", COLOR_GREEN)
-        patched = is_agy_patched(vscode_agy_path)
-        _kv("Patch:", "already patched" if patched else "not patched",
-            COLOR_YELLOW if patched else COLOR_GREEN)
-        size = file_size(vscode_agy_path)
-        _kv("Size:", format_bytes(size), COLOR_GREEN if size > 0 else COLOR_YELLOW)
-    else:
-        _kv("Status:", "not found", COLOR_YELLOW)
+        print(f"  {color('[-]', COLOR_DIM)} {color('VS Code Extension:', COLOR_WHITE):<24} {color('not found', COLOR_DIM)}")
 
 
 def show_about():
@@ -554,8 +544,8 @@ def run_cli():
                         if agy_p and os.path.isfile(agy_p):
                             agy_path = agy_p
 
-    # Auto-check for updates on startup
-    check_for_updates(silent=True)
+    # Auto-check for updates in background (non-blocking)
+    check_for_updates_async()
 
     redraw_main_screen(main_js_path, manager_path, agy_path, vscode_path=vscode_path,
                        vscode_agy_path=vscode_agy_path, backend_agy_path=backend_agy_path,
@@ -585,6 +575,14 @@ def run_cli():
         print()
         print_menu_row("0", "Exit", "quit the patcher", COLOR_RED)
         print_menu_footer("Tip: patches are reversible — use RESTORE any time.")
+
+        if os.name == "nt":
+            import msvcrt
+            try:
+                while msvcrt.kbhit():
+                    msvcrt.getch()
+            except Exception:
+                pass
 
         choice = input(color("\n  Select option > ", COLOR_CYAN, COLOR_BOLD)).strip()
         print()

@@ -45,7 +45,7 @@ ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".zip")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "source"))
 
 from patcher.agy import patcher as agy  # noqa: E402
-from patcher.utils.atomic import apply_patches_to_data  # noqa: E402
+from patcher.gates import apply_patches_to_data  # noqa: E402
 
 
 def _request_json(url):

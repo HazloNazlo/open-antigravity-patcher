@@ -26,6 +26,57 @@ CLI agy, бэкенд Antigravity IDE и сам IDE (main.js) использую
 
 import re
 
+
+# --------------------------------------------------------------------------- #
+#  Определение целевой архитектуры бинарника                                  #
+# --------------------------------------------------------------------------- #
+
+def detect_binary_arch(data: bytes) -> str:
+    """Определяет архитектуру бинарника: 'x64' | 'arm64' | 'universal' | 'unknown'.
+
+    Поддерживает:
+      * PE (Windows .exe / .dll)
+      * ELF (Linux)
+      * Mach-O (macOS single-arch & fat/universal)
+    """
+    if not data or len(data) < 8:
+        return "unknown"
+
+    # 1. PE / MZ (Windows)
+    if len(data) >= 0x40 and data[:2] == b"MZ":
+        pe_offset = int.from_bytes(data[0x3c:0x40], "little")
+        if len(data) >= pe_offset + 6 and data[pe_offset:pe_offset + 4] == b"PE\x00\x00":
+            machine = int.from_bytes(data[pe_offset + 4:pe_offset + 6], "little")
+            if machine == 0x8664:
+                return "x64"
+            if machine == 0xAA64:
+                return "arm64"
+            if machine == 0x014C:
+                return "x86"
+
+    # 2. ELF (Linux)
+    if len(data) >= 0x14 and data[:4] == b"\x7fELF":
+        machine = int.from_bytes(data[0x12:0x14], "little")
+        if machine == 0x3E:
+            return "x64"
+        if machine == 0xB7:
+            return "arm64"
+
+    # 3. Mach-O (macOS)
+    magic = data[:4]
+    if magic in (b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"):
+        return "universal"
+    if magic in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf"):
+        endian = "little" if magic == b"\xcf\xfa\xed\xfe" else "big"
+        cputype = int.from_bytes(data[4:8], endian)
+        if cputype == 0x01000007:
+            return "x64"
+        if cputype == 0x0100000C:
+            return "arm64"
+
+    return "unknown"
+
+
 # --------------------------------------------------------------------------- #
 #  Подмена прокси                                                            #
 # --------------------------------------------------------------------------- #
@@ -107,24 +158,65 @@ class ByteGate:
     allow_multiple=False) найдена в нескольких местах.
     """
 
-    def __init__(self, label, unpatched, patched, fix, offset=0, allow_multiple=False):
+    def __init__(self, label, unpatched, patched, fix, offset=0, allow_multiple=False,
+                 arch="all", quick_check=None, anchor_unpatched=None, anchor_patched=None):
         self.label = label
         self.unpatched_re = re.compile(unpatched, re.S)
         self.patched_re = re.compile(patched, re.S)
         self.fix = fix
         self.offset = offset
         self.allow_multiple = allow_multiple
+        self.arch = arch
+        self.quick_check = tuple(quick_check) if quick_check else ()
+        self.anchor_unpatched = anchor_unpatched
+        self.anchor_patched = anchor_patched
 
     @property
     def desc(self):
         return self.label
 
     def resolve(self, data):
-        patched_hits = [m.start() + self.offset for m in self.patched_re.finditer(data)]
-        if patched_hits:
-            return ("patched", patched_hits)
+        if self.quick_check and not any(q in data for q in self.quick_check):
+            raise LookupError(
+                f"сигнатура гейта «{self.label}» не найдена (quick check)")
 
-        hits = [m.start() + self.offset for m in self.unpatched_re.finditer(data)]
+        if self.anchor_patched:
+            patched_hits = []
+            idx = 0
+            while True:
+                pos = data.find(self.anchor_patched, idx)
+                if pos == -1:
+                    break
+                start = max(0, pos - self.offset)
+                chunk = data[start:start + self.offset + len(self.fix) + 48]
+                for m in self.patched_re.finditer(chunk):
+                    hit = start + m.start() + self.offset
+                    if hit not in patched_hits:
+                        patched_hits.append(hit)
+                idx = pos + 1
+        else:
+            patched_hits = [m.start() + self.offset for m in self.patched_re.finditer(data)]
+
+        if patched_hits:
+            return ("patched", sorted(patched_hits))
+
+        if self.anchor_unpatched:
+            hits = []
+            idx = 0
+            while True:
+                pos = data.find(self.anchor_unpatched, idx)
+                if pos == -1:
+                    break
+                start = max(0, pos - self.offset)
+                chunk = data[start:start + self.offset + len(self.fix) + 48]
+                for m in self.unpatched_re.finditer(chunk):
+                    hit = start + m.start() + self.offset
+                    if hit not in hits:
+                        hits.append(hit)
+                idx = pos + 1
+        else:
+            hits = [m.start() + self.offset for m in self.unpatched_re.finditer(data)]
+
         if not hits:
             raise LookupError(
                 f"сигнатура гейта «{self.label}» не найдена (unsupported version?)")
@@ -132,7 +224,7 @@ class ByteGate:
             raise LookupError(
                 f"сигнатура гейта «{self.label}» неоднозначна ({len(hits)} совпадения) "
                 "— отказ от угадывания")
-        return ("unpatched", hits)
+        return ("unpatched", sorted(hits))
 
     def resolve_all(self, data):
         """Совместимость со старым MultiGate.resolve_all: [(kind, offsets, gate)]."""
@@ -175,19 +267,26 @@ VALIDATOR_GATES = (
         _ARM64_LDRB_W3_X0_8 + _ARM64_TBZ_W3_ANY_BIT + _ARM64_TOKEN_STORE,
         _ARM64_MOV_W3_1 + _ARM64_STRB_W3_X0_8 + _ARM64_TOKEN_STORE,
         _ARM64_MOV_W3_1 + _ARM64_STRB_W3_X0_8,
+        arch="arm64",
+        quick_check=(_ARM64_LDRB_W3_X0_8, _ARM64_STRB_W3_X0_8),
     ),
     ByteGate(
         "hasValidAuth=true (x64)",
         _X64_CMP_BYTE_RAX8 + _X64_JE + _X64_TAIL,
         _X64_MOV_BYTE_RAX8_1 + _X64_NOP2 + _X64_TAIL,
         _X64_MOV_BYTE_RAX8_1 + _X64_NOP2,
+        arch="x64",
+        quick_check=(_X64_CMP_BYTE_RAX8, _X64_MOV_BYTE_RAX8_1),
     ),
 )
 
 
 def find_validator_gate(data):
     """Совместимость со старым API: (state, offset, label, fix_bytes)."""
+    target_arch = detect_binary_arch(data)
     for gate in VALIDATOR_GATES:
+        if target_arch not in ("unknown", "universal") and gate.arch != "all" and gate.arch != target_arch:
+            continue
         try:
             state, offsets = gate.resolve(data)
         except LookupError:
@@ -234,6 +333,8 @@ CLI_GATE_X64 = ByteGate(
     b"\x48\x85\xc0\x90",
     offset=9,
     allow_multiple=True,
+    arch="x64",
+    quick_check=(b"\x80\x78\x08\x00\x0f\x85", b"\x48\x85\xc0\x90\x0f\x85"),
 )
 
 CLI_GATE_ARM64 = ByteGate(
@@ -247,6 +348,10 @@ CLI_GATE_ARM64 = ByteGate(
     b"\x21\x00\x80\x52",
     offset=8,
     allow_multiple=True,
+    arch="arm64",
+    quick_check=(b"\x01\x20\x40\x39", b"\x21\x00\x80\x52"),
+    anchor_unpatched=b"\x01\x20\x40\x39",
+    anchor_patched=b"\x21\x00\x80\x52",
 )
 
 CLI_GATE_ARM64_W4 = ByteGate(
@@ -258,6 +363,10 @@ CLI_GATE_ARM64_W4 = ByteGate(
     b"\x24\x00\x80\x52",
     offset=4,
     allow_multiple=True,
+    arch="arm64",
+    quick_check=(b"\x04\x20\x40\x39", b"\x24\x00\x80\x52"),
+    anchor_unpatched=b"\x04\x20\x40\x39",
+    anchor_patched=b"\x24\x00\x80\x52",
 )
 
 CLI_GATE_ARM64_W2 = ByteGate(
@@ -269,6 +378,10 @@ CLI_GATE_ARM64_W2 = ByteGate(
     b"\x22\x00\x80\x52",
     offset=8,
     allow_multiple=True,
+    arch="arm64",
+    quick_check=(b"\x02\x20\x40\x39", b"\x22\x00\x80\x52"),
+    anchor_unpatched=b"\x02\x20\x40\x39",
+    anchor_patched=b"\x22\x00\x80\x52",
 )
 
 CLI_GATES = (CLI_GATE_X64, CLI_GATE_ARM64, CLI_GATE_ARM64_W2, CLI_GATE_ARM64_W4)
@@ -353,10 +466,13 @@ def plan_go_patches(data, cli_screens=False, revert_proxy=True):
     """
     edits = []
     states = []
+    target_arch = detect_binary_arch(data)
 
     # --- гейт валидатора ---
     validator_state = None
     for gate in VALIDATOR_GATES:
+        if target_arch not in ("unknown", "universal") and gate.arch != "all" and gate.arch != target_arch:
+            continue
         try:
             state, offsets = gate.resolve(data)
         except LookupError:
@@ -375,6 +491,8 @@ def plan_go_patches(data, cli_screens=False, revert_proxy=True):
     # --- экраны допустимости CLI (только для agy) ---
     if cli_screens:
         for gate in CLI_GATES:
+            if target_arch not in ("unknown", "universal") and gate.arch != "all" and gate.arch != target_arch:
+                continue
             try:
                 state, offsets = gate.resolve(data)
             except LookupError:
@@ -394,6 +512,14 @@ def plan_go_patches(data, cli_screens=False, revert_proxy=True):
                                     "revert: AG_LS_PROXY -> https_proxy"))
 
     return edits, states
+
+
+def apply_patches_to_data(data, patches):
+    """Применяет список (offset, gate) к байтовому массиву in-place."""
+    buf = bytearray(data)
+    for off, gate in patches:
+        buf[off:off + len(gate.fix)] = gate.fix
+    return bytes(buf)
 
 
 def apply_edits(data, edits):

@@ -49,11 +49,13 @@ from patcher.utils.binary import patch_binary, restore_binary, find_backup
 from patcher.gates import (
     validator_gate_state,
     proxy_revert_count,
+    detect_binary_arch,
     CLI_GATES,
     CLI_GATE_GROUP,
 )
 
 BAK_EXT = ".agybak"
+_agy_status_cache = {}
 
 # Совместимость со старым API (используется test-agy/test_cli_releases.py):
 # список (gate_obj, label), где gate_obj.resolve_all(data) -> [(kind, offsets, gate)].
@@ -93,8 +95,11 @@ def get_status(path):
     except OSError:
         return ("unknown", None)
 
+    target_arch = detect_binary_arch(data)
     states = []
     for gate in CLI_GATES:
+        if target_arch not in ("unknown", "universal") and gate.arch != "all" and gate.arch != target_arch:
+            continue
         try:
             state, _offsets = gate.resolve(data)
         except LookupError:
@@ -118,14 +123,27 @@ def get_status_detail(path):
     """
     if not path or not os.path.isfile(path):
         return ("unknown", [])
+
+    cache_key = None
+    try:
+        st = os.stat(path)
+        cache_key = (os.path.abspath(path), st.st_mtime, st.st_size)
+        if cache_key in _agy_status_cache:
+            return _agy_status_cache[cache_key]
+    except OSError:
+        pass
+
     try:
         with open(path, "rb") as f:
             data = f.read()
     except OSError:
         return ("unknown", [])
 
+    target_arch = detect_binary_arch(data)
     states = []
     for gate in CLI_GATES:
+        if target_arch not in ("unknown", "universal") and gate.arch != "all" and gate.arch != target_arch:
+            continue
         try:
             state, _offsets = gate.resolve(data)
         except LookupError:
@@ -141,10 +159,15 @@ def get_status_detail(path):
 
     known = [s for _label, s in states if s in ("patched", "unpatched")]
     if not known:
-        return ("unknown", states)
-    if all(s == "patched" for s in known):
-        return ("patched", states)
-    return ("unpatched", states)
+        result = ("unknown", states)
+    elif all(s == "patched" for s in known):
+        result = ("patched", states)
+    else:
+        result = ("unpatched", states)
+
+    if cache_key:
+        _agy_status_cache[cache_key] = result
+    return result
 
 
 def is_already_patched(path):
@@ -202,6 +225,7 @@ def do_patch_agy(path, is_hub=False):
         ok("Nothing to do.")
         return
 
+    _agy_status_cache.clear()
     hash_after = file_hash(path)
 
     if result["method"] == "staged":
@@ -260,6 +284,7 @@ def do_restore_agy(path, is_hub=False):
     if not ok_flag:
         err(message or "Restore failed.")
         return
+    _agy_status_cache.clear()
     if method == "staged" and message:
         ok(message)
 

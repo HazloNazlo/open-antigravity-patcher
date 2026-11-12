@@ -1,5 +1,6 @@
 import json
 import sys
+import threading
 import urllib.request
 import urllib.error
 import webbrowser
@@ -8,13 +9,14 @@ from patcher.constants import VERSION, COLOR_CYAN, COLOR_GREEN, COLOR_YELLOW, CO
 from patcher.utils.console import color, link, info, ok, warn, err, hint, _frame_border, _frame_row
 
 
-GITHUB_REPO = "AvenCores/open-antigravity-patcher"
+GITHUB_REPO = "HazloNazlo/open-antigravity-patcher"
 RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 ISSUES_URL = f"https://github.com/{GITHUB_REPO}/issues"
 API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GOIDA_VPN_URL = "https://github.com/AvenCores/goida-vpn-configs"
 
 LAST_UPDATE_RESULT = None
+_update_thread = None
 
 
 def get_last_update_result():
@@ -24,6 +26,17 @@ def get_last_update_result():
 def set_last_update_result(result):
     global LAST_UPDATE_RESULT
     LAST_UPDATE_RESULT = result
+
+
+def check_for_updates_async():
+    """Фоновая проверка обновлений, чтобы не блокировать вывод меню при запуске."""
+    global _update_thread
+    if _update_thread is None:
+        _update_thread = threading.Thread(
+            target=lambda: check_for_updates(silent=True, timeout=3),
+            daemon=True,
+        )
+        _update_thread.start()
 
 
 def print_network_error_warning():
@@ -45,12 +58,9 @@ def print_network_error_banner():
     print()
 
 
-
 def print_update_status_notice():
-    """Prints update notice, up-to-date status, or network error warning banner in the main menu."""
-    if LAST_UPDATE_RESULT == "network_error":
-        print_network_error_banner()
-    elif isinstance(LAST_UPDATE_RESULT, tuple) and LAST_UPDATE_RESULT[0] == "update_available":
+    """Prints update notice or up-to-date status in the main menu without blocking."""
+    if isinstance(LAST_UPDATE_RESULT, tuple) and LAST_UPDATE_RESULT[0] == "update_available":
         _, tag, url = LAST_UPDATE_RESULT
         info(f"New version available: {color(tag, COLOR_GREEN, COLOR_BOLD)} (current: {color(VERSION, COLOR_YELLOW)})")
         hint(f"Download: {color(url, COLOR_CYAN)}")
