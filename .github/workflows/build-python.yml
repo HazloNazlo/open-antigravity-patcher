@@ -2,6 +2,10 @@ name: Build Python
 
 on:
   push:
+    branches:
+      - main
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
@@ -12,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
@@ -234,6 +238,7 @@ jobs:
           codesign --force --sign - --timestamp=none dist/Open_AG_Patcher_macOS
           codesign --verify --strict dist/Open_AG_Patcher_macOS
           lipo -archs dist/Open_AG_Patcher_macOS
+        working-directory: source
 
       - name: Smoke test (headless)
         run: |
@@ -244,6 +249,7 @@ jobs:
           echo "exit=$?"
           tail -20 /tmp/ag_smoke.txt
           test -s /tmp/ag_smoke.txt
+        working-directory: source
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -251,3 +257,58 @@ jobs:
           name: python-macos-universal2
           path: source/dist/Open_AG_Patcher_macOS
           if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # GitHub Release — publish executables for Windows, Linux and macOS
+  # ─────────────────────────────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs:
+      - build-windows
+      - build-windows-arm64
+      - build-linux-x64
+      - build-linux-arm64
+      - build-macos
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release_assets
+          find artifacts -type f -exec cp -v {} release_assets/ \;
+          ls -lh release_assets/
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.4.0' }}
+          name: "Open AG Patcher ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.4.0' }}"
+          draft: false
+          prerelease: false
+          body: |
+            ## Open AG Patcher v1.4.0
+
+            Кроссплатформенный патчер региональных ограничений Google Antigravity (IDE 2.6.x, Manager 2.31.2, CLI agy, IDE backend agy).
+
+            ### Файлы релиза:
+            * **Windows (x64):** `Open_AG_Patcher_Windows_x64.exe`
+            * **Windows (ARM64):** `Open_AG_Patcher_Windows_arm64.exe`
+            * **Linux (x64):** `Open_AG_Patcher_Linux_x64`
+            * **Linux (ARM64):** `Open_AG_Patcher_Linux_arm64`
+            * **macOS (universal2 — Intel + Apple Silicon):** `Open_AG_Patcher_macOS`
+
+            ### Ключевые возможности и изменения v1.4.0:
+            * **Единый движок гейтов (`gates.py`):** байтовые сигнатуры, строгая идемпотентность, отказ от угадывания при неоднозначности.
+            * **Antigravity IDE 2.6.x:** снятие тир-гейта `confirmUserForService` и онбординг `standard-tier` (с безопасным fallback на 2.5.x).
+            * **Бэкенд Antigravity IDE (`agy --hub`):** выделенная поддержка `~/.gemini/bin/agy`.
+            * **macOS App Management:** безопасная модификация через staging + swap бандлов.
+            * **macOS переподпись:** ad-hoc подпись «изнутри наружу» с сохранением entitlements (`allow-jit`, `disable-library-validation`).
+            * **Откат прокси:** автоматический возврат `AG_LS_PROXY` → `https_proxy`.
+          files: release_assets/*
