@@ -187,27 +187,15 @@ source/dist/Open_AG_Patcher_macOS   — universal2 (x86_64 + arm64), ~13.9 МБ,
 
 ## 5. Что НЕ сделано / что осталось
 
-### 5.1 Windows и Linux — нужен push в GitHub
+### 5.1 Windows и Linux — собраны через GitHub Actions
 
-Локально кросс-сборка невозможна (PyInstaller не кросс-компилится), но workflow
-подготовлен и лежит в `.github/workflows/build-python.yml`.
-
-**Блокер:** в рабочей папке **нет `.git`** — это распакованная копия, а не git-репозиторий.
-Чтобы собрать Windows/Linux:
-
-```bash
-cd "/Users/sly/Downloads/AvenCores-open-antigravity-patcher-fe12d5b"
-git init && git remote add origin <URL-репозитория-AvenCores>
-git add -A && git commit -m "v1.4.0: единый движок гейтов, IDE 2.6.x, бэкенд agy, App Management staging"
-git push -u origin main
-```
-
-Далее → Actions → «Build Python» → скачать артефакты
-`python-windows-x64`, `python-windows-arm64`, `python-linux-x64`, `python-linux-arm64`,
-`python-macos-universal2`.
-
-**Альтернатива без GitHub:** запустить workflow вручную (`workflow_dispatch`) или
-перенести workflow в свой репозиторий — он самодостаточен.
+Репозиторий подключён (`https://github.com/HazloNazlo/open-antigravity-patcher.git`), выполнен пуш в ветку `main`.
+GitHub Actions workflow успешно собрал и опубликовал артефакты:
+* `python-windows-x64` (`Open_AG_Patcher_Windows_x64.exe`, 10.3 МБ)
+* `python-windows-arm64` (`Open_AG_Patcher_Windows_arm64.exe`, 10.0 МБ)
+* `python-linux-x64` (`Open_AG_Patcher_Linux_x64`, 24.9 МБ)
+* `python-linux-arm64` (`Open_AG_Patcher_Linux_arm64`, 23.3 МБ)
+* `python-macos-universal2` (`Open_AG_Patcher_macOS`, 13.9 МБ) — также собран локально в `source/dist/`.
 
 ### 5.2 Не проверено на живых Windows/Linux
 

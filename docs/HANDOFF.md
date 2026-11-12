@@ -61,7 +61,7 @@ IDE 2.6.x, патч бэкенда IDE, обход App Management через sta
 | macOS universal2-бинарник | ✅ собран в `source/dist/` |
 | Синхронизация `ag-patcher-mac/` | ✅ готово (добавлены `CLI_GATES`, v1.4.0) |
 | README под 1.4.0 | ✅ готово (добавлена плашка с описанием 1.4.0) |
-| Windows/Linux-бинарники | ❌ нужен push в GitHub (нет `.git`) |
+| Windows/Linux-бинарники | ✅ собраны в GitHub Actions (4 артефакта) |
 | Живая проверка на Windows/Linux | ❌ не делалась |
 
 Подробности — `docs/STATUS.md`, раздел 5.
