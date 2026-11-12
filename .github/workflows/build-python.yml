@@ -1,0 +1,253 @@
+name: Build Python
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Отмена устаревших сборок при новых коммитах в ту же ветку,
+# чтобы очередь не росла при частых пушах.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Windows: x64
+  # PyInstaller runs natively; architecture param selects the Python interpreter bitness.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows (${{ matrix.arch }})
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            python-arch: x64
+            output: Open_AG_Patcher_Windows_x64.exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python (${{ matrix.arch }})
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+          architecture: ${{ matrix.python-arch }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: source
+
+      - name: Build with PyInstaller
+        run: >
+          pyinstaller --onefile
+          --uac-admin
+          --icon=icon.ico
+          --name="Open_AG_Patcher_Windows_x64"
+          --noupx
+          --clean
+          --version-file=version.txt
+          --hidden-import=packaging
+          --hidden-import=packaging.version
+          --hidden-import=packaging.specifiers
+          --hidden-import=packaging.requirements
+          main.py
+        working-directory: source
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-windows-${{ matrix.arch }}
+          path: source/dist/${{ matrix.output }}
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Windows ARM64 — native windows-11-arm runner
+  # setup-python@v6 on ARM64 runners does not accept the 'architecture' param,
+  # so this target runs as a dedicated job.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-windows-arm64:
+    name: Build Windows (arm64)
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: source
+
+      - name: Build with PyInstaller
+        run: >
+          pyinstaller --onefile
+          --uac-admin
+          --icon=icon.ico
+          --name="Open_AG_Patcher_Windows_arm64"
+          --noupx
+          --clean
+          --version-file=version.txt
+          --hidden-import=packaging
+          --hidden-import=packaging.version
+          --hidden-import=packaging.specifiers
+          --hidden-import=packaging.requirements
+          main.py
+        working-directory: source
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-windows-arm64
+          path: source/dist/Open_AG_Patcher_Windows_arm64.exe
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Linux x64
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-linux-x64:
+    name: Build Linux (x64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: source
+
+      - name: Build with PyInstaller
+        run: >
+          pyinstaller --onefile
+          --icon=icon.ico
+          --name="Open_AG_Patcher_Linux_x64"
+          --hidden-import=packaging
+          --hidden-import=packaging.version
+          --hidden-import=packaging.specifiers
+          --hidden-import=packaging.requirements
+          --clean
+          main.py
+        working-directory: source
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-linux-x64
+          path: source/dist/Open_AG_Patcher_Linux_x64
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Linux ARM64 — native ubuntu-24.04-arm runner
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-linux-arm64:
+    name: Build Linux (ARM64)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: source
+
+      - name: Build with PyInstaller
+        run: >
+          pyinstaller --onefile
+          --icon=icon.ico
+          --name="Open_AG_Patcher_Linux_arm64"
+          --hidden-import=packaging
+          --hidden-import=packaging.version
+          --hidden-import=packaging.specifiers
+          --hidden-import=packaging.requirements
+          --clean
+          main.py
+        working-directory: source
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-linux-arm64
+          path: source/dist/Open_AG_Patcher_Linux_arm64
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # macOS — universal2 binary (Intel + Apple Silicon in one file)
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-macos:
+    name: Build macOS (universal2)
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python (universal2 / arm64 host)
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: source
+
+      - name: Build with PyInstaller (universal2)
+        run: >
+          pyinstaller --onefile
+          --name="Open_AG_Patcher_macOS"
+          --target-arch universal2
+          --hidden-import=packaging
+          --hidden-import=packaging.version
+          --hidden-import=packaging.specifiers
+          --hidden-import=packaging.requirements
+          --clean
+          main.py
+        working-directory: source
+
+      # PyInstaller подписывает onefile ad-hoc, но после упаковки PKG-архива
+      # подпись может оказаться неполной — macOS тогда убивает процесс
+      # с "Code Signature Invalid". Переподписываем бинарник целиком.
+      - name: Re-sign (ad-hoc) and verify
+        run: |
+          codesign --force --sign - --timestamp=none dist/Open_AG_Patcher_macOS
+          codesign --verify --strict dist/Open_AG_Patcher_macOS
+          lipo -archs dist/Open_AG_Patcher_macOS
+
+      - name: Smoke test (headless)
+        run: |
+          # Бинарник без TTY печатает меню и ждёт ввода — скармливаем "0"
+          # (выход), чтобы убедиться, что он стартует и не падает.
+          set +e
+          printf '0\n' | ./dist/Open_AG_Patcher_macOS > /tmp/ag_smoke.txt 2>&1
+          echo "exit=$?"
+          tail -20 /tmp/ag_smoke.txt
+          test -s /tmp/ag_smoke.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-macos-universal2
+          path: source/dist/Open_AG_Patcher_macOS
+          if-no-files-found: error
